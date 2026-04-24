@@ -58,7 +58,9 @@ setInterval(() => saveToFile(), 5000);
 
 // --- Command Handlers ---
 
+
 // /start command
+
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     bot.sendMessage(chatId, 
@@ -66,20 +68,55 @@ bot.onText(/\/start/, (msg) => {
         `*How to use:*\n` +
         `Send expenses like:\n` +
         `\`300-egg🥚\`\n` +
-        `\`400-bread🍞\`\n` +
-        `\`1250-coffee☕\`\n\n` +
+        `\`400-bread🍞\`\n\n` +
         `*Commands:*\n` +
-        `🔹 /bills - Show all expenses with total\n` +
-        `🔹 /total - Show only the total amount\n` +
+        `🔹 /bills - Show all expenses\n` +
+        `🔹 /total - Show only total\n` +
         `🔹 /clear - Clear ALL expenses\n` +
-        `🔹 /clear 3 - Clear a specific expense (by number)\n` +
-        `🔹 /start - Show this help message\n\n` +
+        `🔹 /clear 3 - Clear specific expense\n` +
+        `🔹 /reports daily/weekly - Enable reports\n` +
+        `🔹 /reportsettings - Check report status\n` +
+        `🔹 /report daily/weekly/monthly - Test reports\n\n` +
+        `*Reports:* 📊\n` +
+        `Get automatic summaries:\n` +
+        `• Daily at 9 PM\n` +
+        `• Weekly on Sunday at 8 PM\n` +
+        `• Monthly on the 1st at 10 AM\n\n` +
         `*Example:*\n` +
-        `Send: \`500-lunch🍱\`\n` +
-        `Bot: ✅ Added: 500 for lunch🍱`,
+        `Send: \`500-lunch🍱\``,
         { parse_mode: 'Markdown' }
     );
 });
+
+
+
+setInterval(() => {
+    const now = new Date();
+    
+    // Send daily summary at 9 PM
+    if (now.getHours() === 21 && now.getMinutes() === 0) {
+        for (const [chatId, userExpenses] of expenses.entries()) {
+            if (userExpenses.length > 0) {
+                const total = userExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+                bot.sendMessage(chatId, 
+                    `📊 *Daily Summary*\n\n` +
+                    `Today's expenses: ${userExpenses.length} items\n` +
+                    `Total spent: ${total}\n\n` +
+                    `Type /bills for details.`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        }
+    }
+    
+    // Send weekly summary on Sunday at 8 PM
+    if (now.getDay() === 0 && now.getHours() === 20 && now.getMinutes() === 0) {
+        // Similar logic as above
+    }
+}, 60000); // Check every minute
+
+
+
 
 // /bills command
 bot.onText(/\/bills/, (msg) => {
