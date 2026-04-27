@@ -1,228 +1,219 @@
 const TelegramBot = require('node-telegram-bot-api');
+const mongoose = require('mongoose');
+const fs = require('fs');
 require('dotenv').config();
 
-// Get token from environment variable
+// Get tokens from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const MONGODB_URI = process.env.MONGODB_URI;
 
-if (!BOT_TOKEN) {
-    console.error('❌ BOT_TOKEN not found! Create .env file with BOT_TOKEN=your_token');
+if (!BOT_TOKEN || !MONGODB_URI) {
+    console.error('❌ BOT_TOKEN or MONGODB_URI missing in .env!');
     process.exit(1);
+}
+
+// Connect to MongoDB
+mongoose.connect(MONGODB_URI, { dbName: 'pocketLedger' })
+    .then(() => {
+        console.log('✅ Connected to MongoDB');
+        migrateData();
+    })
+    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+// Define Schema & Model
+const expenseSchema = new mongoose.Schema({
+    chatId: { type: Number, required: true, index: true },
+    amount: { type: Number, required: true },
+    description: { type: String, required: true },
+    category: { type: String, default: 'Other 📦' },
+    timestamp: { type: Date, default: Date.now }
+});
+const Expense = mongoose.model('Expense', expenseSchema);
+
+// Auto-Categorization Logic
+function categorize(description) {
+    const desc = description.toLowerCase();
+    if (desc.match(/egg|bread|milk|grocery|food|meat|fruit|veg|market|walmart|aldi/)) return 'Groceries 🛒';
+    if (desc.match(/coffee|cafe|tea|starbucks|boba|latte/)) return 'Coffee ☕';
+    if (desc.match(/lunch|dinner|restaurant|pizza|burger|sushi|mcdonalds|kfc|eat/)) return 'Dining Out 🍔';
+    if (desc.match(/bus|train|uber|taxi|gas|petrol|fuel|car|transit/)) return 'Transport 🚗';
+    if (desc.match(/rent|bill|water|electricity|internet|wifi|phone|mobile/)) return 'Bills 🧾';
+    if (desc.match(/movie|game|steam|netflix|spotify|cinema|concert/)) return 'Entertainment 🎮';
+    if (desc.match(/gym|health|doctor|medicine|pharmacy|pill/)) return 'Health 🏥';
+    if (desc.match(/shirt|shoe|clothes|mall|shopping|jacket/)) return 'Shopping 🛍️';
+    return 'Other 📦';
+}
+
+// Migration Script
+async function migrateData() {
+    if (fs.existsSync('expenses.json')) {
+        console.log('📦 Found old expenses.json. Migrating to MongoDB...');
+        try {
+            const data = JSON.parse(fs.readFileSync('expenses.json', 'utf8'));
+            let count = 0;
+            for (const [chatIdStr, userExpenses] of Object.entries(data)) {
+                const chatId = parseInt(chatIdStr);
+                const existing = await Expense.findOne({ chatId });
+                if (!existing && userExpenses.length > 0) {
+                    const docs = userExpenses.map(exp => ({
+                        chatId,
+                        amount: exp.amount,
+                        description: exp.description,
+                        category: categorize(exp.description),
+                        timestamp: new Date(exp.timestamp)
+                    }));
+                    await Expense.insertMany(docs);
+                    count += docs.length;
+                }
+            }
+            console.log(`✅ Migrated ${count} expenses successfully!`);
+            fs.renameSync('expenses.json', 'expenses.json.migrated'); // Backup
+        } catch (error) {
+            console.error('❌ Migration failed:', error);
+        }
+    }
 }
 
 // Create bot instance
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// Store expenses in memory (in production, use database or JSON file)
-// Structure: { chatId: [{ amount, description, timestamp, id }] }
-const expenses = new Map();
-
 console.log('🤖 Expense Tracker Bot is running...');
-console.log('Bot commands: /start, /bills, /total, /clear, /clear [number]');
-
-// Helper function to get user's expenses
-function getUserExpenses(chatId) {
-    if (!expenses.has(chatId)) {
-        expenses.set(chatId, []);
-    }
-    return expenses.get(chatId);
-}
-
-// Helper function to save expenses to JSON file (optional, for persistence)
-const fs = require('fs');
-const DATA_FILE = 'expenses.json';
-
-function saveToFile() {
-    const data = {};
-    for (const [chatId, userExpenses] of expenses.entries()) {
-        data[chatId] = userExpenses;
-    }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-    console.log('💾 Data saved to file');
-}
-
-function loadFromFile() {
-    if (fs.existsSync(DATA_FILE)) {
-        const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-        for (const [chatId, userExpenses] of Object.entries(data)) {
-            expenses.set(parseInt(chatId), userExpenses);
-        }
-        console.log('📂 Data loaded from file');
-    }
-}
-
-// Load existing data when bot starts
-loadFromFile();
-
-// Save data every 5 seconds (or after each change)
-setInterval(() => saveToFile(), 5000);
 
 // --- Command Handlers ---
 
-
-// /start command
-
+// /start
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     bot.sendMessage(chatId, 
-        `💰 *Expense Tracker Bot* 💰\n\n` +
+        `💎 *Pocket Ledger Pro* 💎\n\n` +
         `*How to use:*\n` +
-        `Send expenses like:\n` +
-        `\`300-egg🥚\`\n` +
-        `\`400-bread🍞\`\n\n` +
-        `*Commands:*\n` +
-        `🔹 /bills - Show all expenses\n` +
-        `🔹 /total - Show only total\n` +
-        `🔹 /clear - Clear ALL expenses\n` +
-        `🔹 /clear 3 - Clear specific expense\n` +
-        `🔹 /reports daily/weekly - Enable reports\n` +
-        `🔹 /reportsettings - Check report status\n` +
-        `🔹 /report daily/weekly/monthly - Test reports\n\n` +
-        `*Reports:* 📊\n` +
-        `Get automatic summaries:\n` +
-        `• Daily at 9 PM\n` +
-        `• Weekly on Sunday at 8 PM\n` +
-        `• Monthly on the 1st at 10 AM\n\n` +
-        `*Example:*\n` +
-        `Send: \`500-lunch🍱\``,
+        `Simply send your expenses:\n` +
+        `\`300-egg🥚\` or \`300 egg🥚\`\n` +
+        `\`400 bread🍞\`\n\n` +
+        `*Analytics & Commands:*\n` +
+        `📊 /stats - See smart spending breakdowns\n` +
+        `📜 /history - View recent transactions\n` +
+        `💡 /suggest - Get AI cost-saving tips\n` +
+        `🗑️ /clear - Wipe your history\n\n` +
+        `*Reports:* 📅\n` +
+        `Automatic summaries sent Daily (9 PM) and Weekly (Sun 8 PM).`,
         { parse_mode: 'Markdown' }
     );
 });
 
-
-
-setInterval(() => {
-    const now = new Date();
-    
-    // Send daily summary at 9 PM
-    if (now.getHours() === 21 && now.getMinutes() === 0) {
-        for (const [chatId, userExpenses] of expenses.entries()) {
-            if (userExpenses.length > 0) {
-                const total = userExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-                bot.sendMessage(chatId, 
-                    `📊 *Daily Summary*\n\n` +
-                    `Today's expenses: ${userExpenses.length} items\n` +
-                    `Total spent: ${total}\n\n` +
-                    `Type /bills for details.`,
-                    { parse_mode: 'Markdown' }
-                );
-            }
-        }
-    }
-    
-    // Send weekly summary on Sunday at 8 PM
-    if (now.getDay() === 0 && now.getHours() === 20 && now.getMinutes() === 0) {
-        // Similar logic as above
-    }
-}, 60000); // Check every minute
-
-
-
-
-// /bills command
-bot.onText(/\/bills/, (msg) => {
+// /history (formerly /bills)
+bot.onText(/\/(history|bills)/, async (msg) => {
     const chatId = msg.chat.id;
-    const userExpenses = getUserExpenses(chatId);
     
-    if (userExpenses.length === 0) {
-        bot.sendMessage(chatId, '📭 *No expenses recorded yet!*\nSend something like `300-egg🥚` to get started.', { parse_mode: 'Markdown' });
+    const expenses = await Expense.find({ chatId }).sort({ timestamp: -1 }).limit(15);
+    
+    if (expenses.length === 0) {
+        bot.sendMessage(chatId, '📭 *No expenses recorded yet!*', { parse_mode: 'Markdown' });
         return;
     }
     
-    let message = '📋 *Your Expenses:*\n\n';
-    let total = 0;
+    let message = '📜 *Recent 15 Expenses:*\n\n';
     
-    userExpenses.forEach((expense, index) => {
-        message += `${index + 1}. *${expense.amount}* - ${expense.description}\n`;
-        total += expense.amount;
+    expenses.forEach((expense) => {
+        const date = expense.timestamp.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        message += `\`${date}\` • *${expense.amount}* • ${expense.description} (${expense.category})\n`;
     });
     
-    message += `\n━━━━━━━━━━━━━━\n`;
-    message += `💰 *TOTAL: ${total}*\n\n`;
-    message += `💡 Use /total for just the total\n`;
-    message += `🗑️ Use /clear N to remove specific expense`;
+    message += `\n💡 Use /stats for a breakdown`;
     
     bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
 });
 
-// /total command - shows only total amount
-bot.onText(/\/total/, (msg) => {
+// /stats
+bot.onText(/\/stats/, async (msg) => {
     const chatId = msg.chat.id;
-    const userExpenses = getUserExpenses(chatId);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     
-    if (userExpenses.length === 0) {
-        bot.sendMessage(chatId, '💰 No expenses yet!');
+    // Aggregate by category for this month
+    const stats = await Expense.aggregate([
+        { $match: { chatId, timestamp: { $gte: startOfMonth } } },
+        { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+        { $sort: { total: -1 } }
+    ]);
+    
+    if (stats.length === 0) {
+        bot.sendMessage(chatId, '📊 No data this month for stats!');
         return;
     }
     
-    const total = userExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const count = userExpenses.length;
+    let totalSpend = 0;
+    let message = `📊 *This Month's Spending breakdown:*\n\n`;
     
+    stats.forEach(stat => {
+        message += `*${stat._id}:* ${stat.total} (${stat.count} items)\n`;
+        totalSpend += stat.total;
+    });
+    
+    message += `\n━━━━━━━━━━━━━━\n`;
+    message += `💰 *TOTAL MONTH:* ${totalSpend}`;
+    
+    bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+});
+
+// /suggest
+bot.onText(/\/suggest/, async (msg) => {
+    const chatId = msg.chat.id;
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    
+    const stats = await Expense.aggregate([
+        { $match: { chatId, timestamp: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: '$category', total: { $sum: '$amount' } } },
+        { $sort: { total: -1 } },
+        { $limit: 1 }
+    ]);
+    
+    if (stats.length === 0) {
+        bot.sendMessage(chatId, '💡 Need more data to give suggestions!');
+        return;
+    }
+    
+    const topCategory = stats[0]._id;
+    const topAmount = stats[0].total;
+    
+    let tip = '';
+    if (topCategory.includes('Dining Out')) tip = "Try meal prepping on Sundays. You could save up to 40% of this cost!";
+    else if (topCategory.includes('Coffee')) tip = "Consider a home coffee maker or a thermos. Cafe visits add up fast!";
+    else if (topCategory.includes('Groceries')) tip = "Check for bulk buys or generic brands to optimize your grocery bill.";
+    else if (topCategory.includes('Transport')) tip = "Look into monthly transit passes or carpooling to reduce transport costs.";
+    else if (topCategory.includes('Shopping')) tip = "Implement a '48-hour rule' before buying clothes or items online to avoid impulse purchases.";
+    else if (topCategory.includes('Health')) tip = "Review any unused health subscriptions or look for generic pharmacy alternatives.";
+    else tip = `You spend the most on ${topCategory}. Take a look at your recent transactions there to see if you can cut back.`;
+
     bot.sendMessage(chatId, 
-        `💰 *Expense Summary*\n\n` +
-        `📝 *Items:* ${count}\n` +
-        `💵 *Total:* ${total}\n` +
-        `📊 *Average:* ${Math.round(total / count)}`,
+        `💡 *Smart Ledger Suggestion*\n\n` +
+        `Your highest expense area is *${topCategory}* (${topAmount} in 30 days).\n\n` +
+        `*Tip:* ${tip}`,
         { parse_mode: 'Markdown' }
     );
 });
 
-// /clear command (with optional index)
-bot.onText(/\/clear(?:\s+(\d+))?/, (msg, match) => {
+// /clear
+bot.onText(/\/clear/, async (msg) => {
     const chatId = msg.chat.id;
-    const userExpenses = getUserExpenses(chatId);
-    const index = match[1]; // Optional number after /clear
-    
-    if (userExpenses.length === 0) {
-        bot.sendMessage(chatId, '📭 No expenses to clear!');
-        return;
-    }
-    
-    if (index) {
-        // Clear specific expense
-        const expenseIndex = parseInt(index) - 1;
-        if (expenseIndex >= 0 && expenseIndex < userExpenses.length) {
-            const removed = userExpenses.splice(expenseIndex, 1)[0];
-            bot.sendMessage(chatId, 
-                `🗑️ *Removed:* ${removed.amount} - ${removed.description}\n` +
-                `📊 *Remaining:* ${userExpenses.length} items\n` +
-                `💰 *New total:* ${userExpenses.reduce((sum, exp) => sum + exp.amount, 0)}`,
-                { parse_mode: 'Markdown' }
-            );
-            saveToFile();
-        } else {
-            bot.sendMessage(chatId, 
-                `❌ Invalid expense number!\n` +
-                `Use numbers 1 to ${userExpenses.length}`,
-                { parse_mode: 'Markdown' }
-            );
-        }
-    } else {
-        // Clear all expenses
-        expenses.set(chatId, []);
-        bot.sendMessage(chatId, '🗑️ *All expenses cleared!*\nStart fresh by adding new expenses.', { parse_mode: 'Markdown' });
-        saveToFile();
-    }
+    await Expense.deleteMany({ chatId });
+    bot.sendMessage(chatId, '🗑️ *All your expenses have been permanently deleted from the database.*', { parse_mode: 'Markdown' });
 });
 
-// Handle adding expenses (format: "amount-description")
-bot.on('message', (msg) => {
+// Message Handler for adding expenses
+bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     
-    // Ignore commands
-    if (text.startsWith('/')) {
-        return;
-    }
+    if (!text || text.startsWith('/')) return;
     
-    // Parse expense: matches "300-egg🥚" or "400-bread🍞" or "1250-coffee☕"
-    const match = text.match(/^(\d+)[-–—]\s*(.+)$/);
+    const match = text.match(/^(\d+)[-–—\s]+\s*(.+)$/);
     
     if (!match) {
-        // Only respond if it's not a command (to avoid spamming)
         bot.sendMessage(chatId, 
             `❌ *Invalid format!*\n\n` +
-            `Please use: \`amount-item\`\n` +
-            `Example: \`300-egg🥚\` or \`400-bread🍞\`\n\n` +
+            `Please use: \`amount item\` or \`amount-item\`\n` +
+            `Example: \`300 egg🥚\` or \`400-bread🍞\`\n\n` +
             `Type /start for help.`,
             { parse_mode: 'Markdown' }
         );
@@ -232,53 +223,96 @@ bot.on('message', (msg) => {
     const amount = parseInt(match[1]);
     const description = match[2].trim();
     
-    // Validate amount
     if (isNaN(amount) || amount <= 0) {
         bot.sendMessage(chatId, '❌ Please enter a valid positive number!');
         return;
     }
     
-    // Add expense
-    const userExpenses = getUserExpenses(chatId);
-    const expense = {
-        amount: amount,
-        description: description,
-        timestamp: new Date().toISOString(),
-        id: Date.now()
-    };
+    const category = categorize(description);
     
-    userExpenses.push(expense);
-    
-    // Calculate new total
-    const total = userExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    
-    bot.sendMessage(chatId, 
-        `✅ *Expense Added!*\n\n` +
-        `💸 ${amount} - ${description}\n` +
-        `📊 Total items: ${userExpenses.length}\n` +
-        `💰 Running total: ${total}\n\n` +
-        `Use /bills to see all expenses.`,
-        { parse_mode: 'Markdown' }
-    );
-    
-    // Save to file after each addition
-    saveToFile();
+    try {
+        const expense = new Expense({ chatId, amount, description, category });
+        await expense.save();
+        
+        // Calculate today's total
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        
+        const dailyTotal = await Expense.aggregate([
+            { $match: { chatId, timestamp: { $gte: today } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+        
+        const dTotal = dailyTotal.length > 0 ? dailyTotal[0].total : amount;
+        
+        bot.sendMessage(chatId, 
+            `✅ *Added to ${category}*\n\n` +
+            `💸 ${amount} - ${description}\n` +
+            `📈 Today's Total: *${dTotal}*\n\n` +
+            `_Use /stats to see breakdowns_`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (error) {
+        console.error('Error saving expense:', error);
+        bot.sendMessage(chatId, '❌ Error saving to database.');
+    }
 });
+
+// Interval for Daily/Weekly Summaries
+setInterval(async () => {
+    const now = new Date();
+    
+    // Daily summary at 9 PM
+    if (now.getHours() === 21 && now.getMinutes() === 0) {
+        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        
+        // Find all unique chatIds who had expenses in the last 24h
+        const activeUsers = await Expense.distinct('chatId', { timestamp: { $gte: oneDayAgo } });
+        
+        for (const chatId of activeUsers) {
+            const stats = await Expense.aggregate([
+                { $match: { chatId, timestamp: { $gte: oneDayAgo } } },
+                { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+            ]);
+            
+            if (stats.length > 0) {
+                bot.sendMessage(chatId, 
+                    `📊 *Daily Summary*\n\n` +
+                    `Today's expenses: ${stats[0].count} items\n` +
+                    `Total spent: ${stats[0].total}\n\n` +
+                    `Type /history for details.`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        }
+    }
+    
+    // Weekly summary on Sunday at 8 PM
+    if (now.getDay() === 0 && now.getHours() === 20 && now.getMinutes() === 0) {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        
+        const activeUsers = await Expense.distinct('chatId', { timestamp: { $gte: sevenDaysAgo } });
+        
+        for (const chatId of activeUsers) {
+            const stats = await Expense.aggregate([
+                { $match: { chatId, timestamp: { $gte: sevenDaysAgo } } },
+                { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+            ]);
+            
+            if (stats.length > 0) {
+                bot.sendMessage(chatId, 
+                    `📅 *Weekly Summary*\n\n` +
+                    `This week's expenses: ${stats[0].count} items\n` +
+                    `Total spent: ${stats[0].total}\n\n` +
+                    `Type /stats for breakdown.`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        }
+    }
+}, 60000); // Check every minute
 
 // Error handling
 bot.on('polling_error', (error) => {
-    console.error('Polling error:', error);
+    // console.error('Polling error:', error); // Hide standard polling errors
 });
-
-bot.on('error', (error) => {
-    console.error('Bot error:', error);
-});
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\n💾 Saving data before shutdown...');
-    saveToFile();
-    process.exit();
-});
-
-console.log('✅ Bot is ready!');
