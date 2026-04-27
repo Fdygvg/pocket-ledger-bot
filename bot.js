@@ -1,7 +1,18 @@
 const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
 const fs = require('fs');
+const http = require('http');
 require('dotenv').config();
+
+// Create a dummy server for Koyeb health checks
+const PORT = process.env.PORT || 8000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Pocket Ledger Bot is running\n');
+}).listen(PORT, () => {
+    console.log(`🚀 Health check server listening on port ${PORT}`);
+});
+
 
 // Get tokens from environment variable
 const BOT_TOKEN = process.env.BOT_TOKEN;
